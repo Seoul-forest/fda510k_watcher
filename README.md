@@ -1,104 +1,145 @@
 # FDA 510(k) HTML Watcher
 
-FDA 510(k) 의료기기 승인 데이터베이스를 모니터링하여 새로운 승인 정보를 자동으로 감지하고 이메일로 알림을 보내는 Python 프로그램입니다.
+A Python application that automatically monitors the FDA 510(k) medical device approval database and sends email notifications when new approval information is detected.
 
-## 🎯 주요 기능
+## 🎯 Key Features
 
-- **자동 모니터링**: FDA 웹사이트에서 새로운 510(k) 승인 정보 자동 감지
-- **다중 조건 검색**: Product Code와 Applicant Name 기반 검색
-- **이메일 알림**: 새로운 정보 감지 시 HTML 테이블 형태로 이메일 발송
-- **중복 방지**: 이미 본 K번호는 저장하여 중복 알림 방지
-- **웹 스크래핑**: Playwright를 사용한 안정적인 웹 데이터 수집
+- **Automatic Monitoring**: Automatically detects new 510(k) approval information from FDA website
+- **Multi-Condition Search**: Search based on Product Code and Applicant Name
+- **Email Notifications**: Sends HTML table format emails when new information is detected
+- **Duplicate Prevention**: Stores seen K-numbers to prevent duplicate notifications
+- **Web Scraping**: Reliable web data collection using Playwright
 
-## 🚀 설치 및 설정
+## 🚀 Installation & Setup
 
-### 1. 저장소 클론
+### 1. Clone Repository
 ```bash
 git clone <repository-url>
 cd fda510k_watcher
 ```
 
-### 2. Python 환경 설정
+### 2. Python Environment Setup
 ```bash
-# conda 환경 사용 (권장)
+# Using conda environment (recommended)
 conda create -n py311 python=3.11
 conda activate py311
 
-# 또는 venv 사용
+# Or using venv
 python -m venv venv
 source venv/bin/activate  # macOS/Linux
 ```
 
-### 3. 패키지 설치
+### 3. Install Dependencies
 ```bash
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 4. 환경 변수 설정
-`.env` 파일을 생성하고 다음 내용을 입력하세요:
+### 4. Environment Variables Configuration
+Create a `.env` file and add the following content:
 
 ```env
-# SMTP 이메일 설정
+# SMTP Email Settings
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
 SMTP_PASS=your_app_password
 MAIL_TO=recipient@example.com
 
-# 모니터링할 제품 코드들 (쉼표로 구분)
+# Product Codes to Monitor (comma-separated)
 WATCH_PRODUCT_CODES=JAK,IZI,LLZ
 
-# 모니터링할 신청자(회사)들 (쉼표로 구분)
+# Applicants to Monitor (comma-separated)
 WATCH_APPLICANTS=Medtronic,Johnson & Johnson,Stryker
 ```
 
-**Gmail 사용 시 주의사항:**
-- 2단계 인증을 활성화해야 합니다
-- 앱 비밀번호를 생성하여 `SMTP_PASS`에 입력해야 합니다
+**Important Notes for Gmail Users:**
+- You must enable 2-factor authentication
+- Generate an app password and use it for `SMTP_PASS`
 
-## 📊 사용법
+## 📊 Usage
 
-### 기본 실행
+### Basic Execution
 ```bash
 python fda_510k_html_watch.py
 ```
 
-### 모니터링 조건 설정
-- **Product Code**: 특정 의료기기 분류 코드로 검색
-- **Applicant**: 특정 회사명으로 검색 (부분 일치)
+### Monitoring Conditions Setup
+- **Product Code**: Search by specific medical device classification codes
+- **Applicant**: Search by company names (partial match)
 
-### 결과 확인
-- 새로운 510(k) 승인이 감지되면 이메일로 알림
-- `fda_510k_html_state.json` 파일에 처리된 K번호들이 저장됨
+### Results
+- Email notifications are sent when new 510(k) approvals are detected
+- Processed K-numbers are stored in `fda_510k_html_state.json`
 
-## 🔧 주요 구성 요소
+## 🔧 Main Components
 
-- **`fda_510k_html_watch.py`**: 메인 프로그램
-- **`.env`**: 환경 변수 설정 (Git에 포함되지 않음)
-- **`requirements.txt`**: 필요한 Python 패키지 목록
-- **`.gitignore`**: Git에서 제외할 파일들
+- **`fda_510k_html_watch.py`**: Main program
+- **`.env`**: Environment variables configuration (not included in Git)
+- **`requirements.txt`**: Required Python packages
+- **`.gitignore`**: Files to exclude from Git
 
-## 📁 파일 구조
+## 📁 File Structure
 ```
 fda510k_watcher/
-├── fda_510k_html_watch.py    # 메인 프로그램
-├── .env                      # 환경 변수 (로컬만)
-├── .gitignore               # Git 제외 파일 목록
-├── requirements.txt          # Python 패키지 목록
-└── README.md                # 프로젝트 설명서
+├── fda_510k_html_watch.py    # Main program
+├── .env                      # Environment variables (local only)
+├── .gitignore               # Git exclusion files
+├── requirements.txt          # Python package list
+└── README.md                # Project documentation
 ```
 
-## ⚠️ 주의사항
+## 🛠️ Technical Details
 
-- `.env` 파일은 민감한 정보를 포함하므로 Git에 커밋하지 마세요
-- FDA 웹사이트의 구조가 변경될 수 있으므로 정기적으로 확인이 필요합니다
-- 웹 스크래핑 시 적절한 간격을 두고 실행하는 것을 권장합니다
+### Web Scraping
+- Uses Playwright for reliable browser automation
+- Handles pagination to collect all search results
+- Robust error handling for website structure changes
 
-## 📝 라이선스
+### Data Parsing
+- BeautifulSoup for HTML parsing
+- Extracts K-number, device name, applicant, product code, decision date, and detail URL
+- Handles various table layouts and formats
 
-이 프로젝트는 교육 및 연구 목적으로 제작되었습니다.
+### Email System
+- SMTP-based email delivery
+- HTML formatted tables for easy reading
+- Configurable email templates
 
-## 🤝 기여
+## ⚠️ Important Notes
 
-버그 리포트나 기능 제안은 이슈로 등록해 주세요.
+- **Never commit the `.env` file** as it contains sensitive information
+- FDA website structure may change, requiring regular verification
+- Use appropriate intervals when running web scraping to be respectful
+- This tool is for educational and research purposes
+
+## 🔒 Security
+
+- Environment variables are loaded from `.env` file (not committed to Git)
+- SMTP credentials are stored securely
+- No sensitive data is logged or exposed
+
+## 📝 License
+
+This project is created for educational and research purposes.
+
+## 🤝 Contributing
+
+- Report bugs by creating issues
+- Suggest new features through issue discussions
+- Follow standard Git workflow for contributions
+
+## 📞 Support
+
+For questions or issues:
+1. Check existing issues in the repository
+2. Create a new issue with detailed description
+3. Include error messages and system information
+
+## 🔄 Future Enhancements
+
+- [ ] Add web interface for configuration
+- [ ] Implement scheduled monitoring
+- [ ] Add more search criteria
+- [ ] Create dashboard for monitoring results
+- [ ] Add export functionality for data analysis
