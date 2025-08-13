@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fda510kwatcher</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunghoonjoo/anaconda3/envs/py311/bin/python</string>
+        <string>/Users/sunghoonjoo/source/fda510k_watcher/fda_510k_html_watch.py</string>
+    </array>
+    
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/sunghoonjoo/source/fda510k_watcher</string>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/sunghoonjoo/source/fda510k_watcher/fda_510k_watcher.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/sunghoonjoo/source/fda510k_watcher/fda_510k_watcher_error.log</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/sunghoonjoo/anaconda3/envs/py311/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>CONDA_DEFAULT_ENV</key>
+        <string>py311</string>
+    </dict>
+    
+    <key>RunAtLoad</key>
+    <false/>
+    
+    <key>KeepAlive</key>
+    <false/>
+    
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
