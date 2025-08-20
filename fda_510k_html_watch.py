@@ -468,9 +468,10 @@ async def main():
     print(f"New results found: {len(all_new)}")
     print(f"All new items: {all_new}")
     
+    now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+    
     if all_new:
-        now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
-        # HTML 본문
+        # 신규 항목이 있을 때: 신규 감지 테이블 포함
         rows = []
         for title, it in all_new:
             rows.append(
@@ -494,7 +495,20 @@ async def main():
         )
         send_email(f"[510(k) HTML] 신규 {len(all_new)}건 감지", html)
     else:
-        print("No new 510(k) approvals found")
+        # 신규 항목이 없을 때: 일일 모니터링 리포트
+        html = (
+            f"<h2>FDA 510(k) 일일 모니터링 리포트 ({now} KST)</h2>"
+            f"<p><strong>신규 510(k) 승인: 없음</strong></p>"
+            f"<p>현재 모니터링 중인 K-number: <strong>{len(seen)}개</strong></p>"
+            f"<p>검색 조건:</p>"
+            f"<ul>"
+            f"<li><strong>Product Codes:</strong> {', '.join(WATCH_PRODUCT_CODES)}</li>"
+            f"<li><strong>Applicants:</strong> {', '.join(WATCH_APPLICANTS)}</li>"
+            f"</ul>"
+            f"<p style='color:#666'>출처: FDA 510(k) 웹 데이터베이스. (웹 DB 주간 갱신, 다운로드 월간 갱신)</p>"
+        )
+        send_email(f"[510(k) HTML] 일일 모니터링 리포트 - 신규 항목 없음", html)
+        print("No new 510(k) approvals found - Daily report email sent")
 
     # seen 업데이트 (최대 규모 제한)
     print(f"Updating state file with {len(seen)} seen K-numbers")
