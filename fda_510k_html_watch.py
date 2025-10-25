@@ -57,7 +57,7 @@ def iso(dstr):
     return dstr or ""
 
 async def run_query(page, product_code=None, applicant=None, decision_from=None, decision_to=None, sort="Decision Date (descending)"):
-    """고급검색 폼에 값을 채우고 결과표 HTML을 돌려준다(첫 페이지부터 모든 페이지 순회)."""
+    """고급검색 폼에 값을 채우고 결과표 HTML을 돌려준다(최신 항목이 있는 첫 페이지만 수집)."""
     
     # 랜덤 지연 추가
     await asyncio.sleep(random.uniform(2, 5))
@@ -244,37 +244,9 @@ async def run_query(page, product_code=None, applicant=None, decision_from=None,
 
     await page.wait_for_load_state("domcontentloaded", timeout=60000)
 
-    html_pages = []
-    while True:
-        html = await page.content()
-        html_pages.append(html)
-
-        # 다음 페이지가 있으면 클릭 (FDA 페이징은 'Next' 링크 또는 페이지 번호 링크)
-        try:
-            next_link = page.get_by_role("link", name=re.compile(r"Next|>", re.I))
-            if hasattr(next_link, 'count') and await next_link.count():
-                try:
-                    await next_link.click()
-                    await asyncio.sleep(random.uniform(1, 3))  # 페이지 전환 후 지연
-                    await page.wait_for_load_state("domcontentloaded", timeout=60000)
-                    continue
-                except Exception:
-                    break
-        except:
-            # 대안 방법: CSS 선택자로 다음 페이지 찾기
-            try:
-                next_links = await page.query_selector_all('a:has-text("Next"), a:has-text(">")')
-                if next_links:
-                    await next_links[0].click()
-                    await asyncio.sleep(random.uniform(1, 3))
-                    await page.wait_for_load_state("domcontentloaded", timeout=60000)
-                    continue
-            except:
-                break
-        
-        # 없으면 종료
-        break
-    return html_pages
+    # 최신 승인 항목은 첫 페이지에 나타나므로 첫 페이지만 수집
+    html = await page.content()
+    return [html]  # 단일 페이지만 반환
 
 def parse_results(html):
     """결과 표에서 레코드를 추출. (K번호, Device Name, Applicant, Product Code, Decision Date, 상세URL)"""
