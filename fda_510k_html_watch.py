@@ -259,9 +259,19 @@ def parse_results(html):
         if not head: 
             continue
         headers = " ".join(th.get_text(strip=True) for th in head.find_all(["th","td"]))
-        if re.search(r"510\(k\)\s*Number", headers, re.I) and re.search(r"Device\s*Name", headers, re.I):
-            table = t; break
+        # 더 유연한 패턴: 510(k) 또는 510(K) 모두 매칭, Device Name도 유연하게
+        if re.search(r"510\s*\(?\s*[kK]\s*\)?\s*Number", headers, re.I) and re.search(r"Device\s*Name", headers, re.I):
+            table = t
+            print(f"Found results table with headers: {headers[:150]}")
+            break
+    
     if table is None:
+        print("WARNING: No results table found. Available table headers:")
+        for i, t in enumerate(soup.find_all("table")):
+            head = t.find("tr")
+            if head:
+                headers = " ".join(th.get_text(strip=True) for th in head.find_all(["th","td"]))
+                print(f"  Table {i}: {headers[:150]}")
         return []
 
     rows = []
@@ -269,23 +279,59 @@ def parse_results(html):
         tds = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
         links = tr.find_all("a")
         detail_url = ""
+        knum = ""
+        
+        # 링크에서 K번호와 상세 URL 추출
         for a in links:
             href = a.get("href","")
+            # 상세 URL 찾기
             if "cfpmn/pmn.cfm?ID=" in href:
                 detail_url = href if href.startswith("http") else "https://www.accessdata.fda.gov" + href
-                break
-
-        # 컬럼 수는 페이지마다 조금 다를 수 있음 → 가장 중요한 값들만 정규 추출
-        knum = next((s for s in tds if re.fullmatch(r"K\d{6}", s, re.I)), "")
-        # 흔한 컬럼 배치: [K#, Device Name, Applicant, Product Code, Date Received, Decision Date, Decision, ...]
-        dev_name = tds[1] if len(tds) > 1 else ""
-        applicant = tds[2] if len(tds) > 2 else ""
-        product_code = tds[3] if len(tds) > 3 else ""
+                # 링크에서 K번호 추출 (예: cfpmn/pmn.cfm?ID=K240795)
+                k_match = re.search(r"ID=(K\d{6})", href, re.I)
+                if k_match:
+                    knum = k_match.group(1)
+                    break
+        
+        # 링크에서 찾지 못했으면 텍스트에서 찾기
+        if not knum:
+            for s in tds:
+                # 부분 매칭으로 K번호 찾기 (공백이나 다른 문자 허용)
+                k_match = re.search(r"K\d{6}", s, re.I)
+                if k_match:
+                    knum = k_match.group(0)
+                    break
+        
+        # K번호를 찾지 못했으면 스킵
+        if not knum:
+            print(f"WARNING: Could not extract K-number from row: {tds[:3]}")
+            continue
+        
+        # 흔한 컬럼 배치: [Device Name, Applicant, 510(K) Number, Decision Date, ...]
+        # 또는 [510(K) Number, Device Name, Applicant, ...] 등 다양할 수 있음
+        # 헤더 순서를 확인하여 정확한 인덱스 찾기
+        dev_name = ""
+        applicant = ""
+        product_code = ""
         decision_date = ""
-        # 뒤쪽 2칸 중 하나가 결정일인 경우가 많음 → YYYYMMDD 형태 pick
-        for cell in tds:
-            if re.fullmatch(r"\d{8}", cell):
-                decision_date = cell
+        
+        # 간단한 방법: K번호가 있는 컬럼을 기준으로 다른 컬럼 찾기
+        # 또는 일반적인 패턴 사용
+        if len(tds) >= 2:
+            # 일반적인 순서: Device Name, Applicant, 510(K) Number, Decision Date
+            # K번호가 3번째 컬럼에 있다고 가정
+            dev_name = tds[0] if len(tds) > 0 else ""
+            applicant = tds[1] if len(tds) > 1 else ""
+            # Decision Date 찾기 (MM/DD/YYYY 또는 YYYYMMDD 형태)
+            for cell in tds:
+                # MM/DD/YYYY 형태
+                if re.search(r"\d{2}/\d{2}/\d{4}", cell):
+                    decision_date = cell
+                    break
+                # YYYYMMDD 형태
+                elif re.fullmatch(r"\d{8}", cell):
+                    decision_date = cell
+                    break
 
         rows.append({
             "k_number": knum,
@@ -295,6 +341,8 @@ def parse_results(html):
             "decision_date": decision_date,
             "detail_url": detail_url
         })
+    
+    print(f"Parsed {len(rows)} rows with K-numbers")
     # 빈 로우 제거
     rows = [r for r in rows if r["k_number"]]
     return rows
@@ -307,7 +355,7 @@ async def main():
     async with async_playwright() as p:
         # 더 강력한 우회 옵션 추가
         browser = await p.chromium.launch(
-            headless=False,  # 헤드리스 모드 비활성화로 더 자연스럽게
+            headless=True,
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",

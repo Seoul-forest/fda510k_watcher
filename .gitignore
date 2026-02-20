@@ -52,3 +52,12 @@ Thumbs.db
 # Project specific
 fda_510k_html_state.json
 *.log
+
+# Debug artifacts
+debug_page.html
+fda_page_debug.png
+
+# Pytest cache
+.pytest_cache/
+.coverage
+htmlcov/
