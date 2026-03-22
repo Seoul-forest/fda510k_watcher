@@ -33,6 +33,8 @@ SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASS = os.getenv("SMTP_PASS")
 MAIL_TO = os.getenv("MAIL_TO", "issue777@gmail.com")
 
+OPENFDA_API_KEY = os.getenv("OPENFDA_API_KEY")
+
 WATCH_PRODUCT_CODES = [s.strip() for s in os.getenv("WATCH_PRODUCT_CODES","").split(",") if s.strip()]
 WATCH_APPLICANTS    = [s.strip() for s in os.getenv("WATCH_APPLICANTS","").split(",") if s.strip()]
 
@@ -86,6 +88,8 @@ def query_openfda(product_code=None, applicant=None):
         "sort": "decision_date:desc",
         "limit": 100,
     }
+    if OPENFDA_API_KEY:
+        params["api_key"] = OPENFDA_API_KEY
     if product_code:
         params["search"] = f'product_code:"{product_code}"'
     elif applicant:
