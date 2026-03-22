@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
-import os, json, time, asyncio, re, traceback, random
+import os, json, time, re, traceback, logging
 from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 import smtplib
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from playwright.async_api import async_playwright
+import requests
+from dotenv import load_dotenv
+
+# 로깅 설정
+LOG_FILE = Path("fda_510k_watcher.log")
+logger = logging.getLogger("fda510k")
+logger.setLevel(logging.INFO)
+_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+_fh = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
+_fh.setFormatter(_fmt)
+_sh = logging.StreamHandler()
+_sh.setFormatter(_fmt)
+logger.addHandler(_fh)
+logger.addHandler(_sh)
 
 STATE_FILE = Path("fda_510k_html_state.json")
-BASE = "https://www.accessdata.fda.gov/scripts/cdrh/cfdocs/cfpmn/pmn.cfm"
+OPENFDA_BASE = "https://api.fda.gov/device/510k.json"
+DETAIL_BASE = "https://www.accessdata.fda.gov/scripts/cdrh/cfdocs/cfpmn/pmn.cfm"
 KST = timezone(timedelta(hours=9))
 
 load_dotenv()
@@ -25,471 +38,129 @@ WATCH_APPLICANTS    = [s.strip() for s in os.getenv("WATCH_APPLICANTS","").split
 
 def load_state():
     if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text())
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning("State file corrupted (%s), backing up and resetting", e)
+            backup = STATE_FILE.with_suffix(".json.bak")
+            STATE_FILE.rename(backup)
     return {"seen_k_numbers": []}
 
 def save_state(state):
-    STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+    tmp.rename(STATE_FILE)
 
 def send_email(subject, html):
     if not (SMTP_HOST and SMTP_USER and SMTP_PASS and MAIL_TO):
-        print("WARN: SMTP env not set; skip email")
+        logger.warning("SMTP env not set; skip email")
         return
-    
-    try:
-        msg = MIMEText(html, "html", "utf-8")
-        msg["Subject"] = subject
-        msg["From"] = SMTP_USER
-        msg["To"] = MAIL_TO
-        
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-            s.starttls()
-            s.login(SMTP_USER, SMTP_PASS)
-            s.sendmail(SMTP_USER, [MAIL_TO], msg.as_string())
-            print("Email sent successfully via Gmail!")
-    except Exception as e:
-        print(f"Error sending email: {e}")
+
+    msg = MIMEText(html, "html", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_USER
+    msg["To"] = MAIL_TO
+
+    for attempt in range(3):
+        try:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+                s.starttls()
+                s.login(SMTP_USER, SMTP_PASS)
+                s.sendmail(SMTP_USER, [MAIL_TO], msg.as_string())
+                logger.info("Email sent successfully")
+                return
+        except Exception as e:
+            logger.error("Error sending email (attempt %d/3): %s", attempt + 1, e)
+            if attempt < 2:
+                time.sleep(5 * (attempt + 1))
 
 def iso(dstr):
-    # FDA 상세 페이지에는 YYYYMMDD 형태가 많음 → YYYY-MM-DD 보정
+    # FDA API는 YYYY-MM-DD 형태이나, YYYYMMDD 형태도 보정
     if dstr and re.fullmatch(r"\d{8}", dstr):
         return f"{dstr[0:4]}-{dstr[4:6]}-{dstr[6:8]}"
     return dstr or ""
 
-async def run_query(page, product_code=None, applicant=None, decision_from=None, decision_to=None, sort="Decision Date (descending)"):
-    """고급검색 폼에 값을 채우고 결과표 HTML을 돌려준다(최신 항목이 있는 첫 페이지만 수집)."""
-    
-    # 랜덤 지연 추가
-    await asyncio.sleep(random.uniform(2, 5))
-    
-    # 더 자연스러운 User-Agent 사용
-    await page.set_extra_http_headers({
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Cache-Control': 'max-age=0'
-    })
-    
-    try:
-        await page.goto(BASE, wait_until="domcontentloaded", timeout=120000)
-        print(f"Successfully loaded FDA page: {BASE}")
-    except Exception as e:
-        print(f"Error loading FDA page: {e}")
-        # 대체 URL 시도
-        try:
-            alt_url = "https://www.accessdata.fda.gov/scripts/cdrh/cfdocs/cfpmn/pmn.cfm"
-            await page.goto(alt_url, wait_until="domcontentloaded", timeout=120000)
-            print(f"Successfully loaded alternative URL: {alt_url}")
-        except Exception as e2:
-            print(f"Failed to load alternative URL: {e2}")
-            return []
-
-    # 페이지 로딩 후 추가 지연
-    await asyncio.sleep(random.uniform(1, 3))
-    
-    # JavaScript 실행 대기
-    try:
-        await page.wait_for_function("document.readyState === 'complete'", timeout=30000)
-    except:
-        pass  # 타임아웃 무시하고 계속 진행
-
-    # 페이지 내용 확인을 위한 스크린샷 저장 (디버깅용)
-    try:
-        await page.screenshot(path="fda_page_debug.png")
-        print("Screenshot saved as fda_page_debug.png")
-    except:
-        pass
-
-    # Product Code 입력
+def query_openfda(product_code=None, applicant=None):
+    """openFDA API로 510(k) 데이터를 조회한다."""
+    params = {
+        "sort": "decision_date:desc",
+        "limit": 100,
+    }
     if product_code:
-        try:
-            # 다양한 방법으로 Product Code 입력 필드 찾기
-            product_code_found = False
-            
-            # 방법 1: 라벨로 찾기
-            try:
-                await page.get_by_label(re.compile(r"Product Code", re.I)).fill(product_code)
-                product_code_found = True
-                print(f"Product Code filled via label: {product_code}")
-            except:
-                pass
-            
-            # 방법 2: name 속성으로 찾기
-            if not product_code_found:
-                try:
-                    await page.fill('input[name*="product" i]', product_code)
-                    product_code_found = True
-                    print(f"Product Code filled via name: {product_code}")
-                except:
-                    pass
-            
-            # 방법 3: placeholder로 찾기
-            if not product_code_found:
-                try:
-                    await page.fill('input[placeholder*="product" i]', product_code)
-                    product_code_found = True
-                    print(f"Product Code filled via placeholder: {product_code}")
-                except:
-                    pass
-            
-            if not product_code_found:
-                print(f"Could not find Product Code input field for: {product_code}")
-            
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-        except Exception as e:
-            print(f"Error filling Product Code: {e}")
-
-    # Applicant 입력
-    if applicant:
-        try:
-            applicant_found = False
-            
-            # 방법 1: 라벨로 찾기
-            try:
-                await page.get_by_label(re.compile(r"Applicant Name", re.I)).fill(applicant)
-                applicant_found = True
-                print(f"Applicant filled via label: {applicant}")
-            except:
-                pass
-            
-            # 방법 2: name 속성으로 찾기
-            if not applicant_found:
-                try:
-                    await page.fill('input[name*="applicant" i]', applicant)
-                    applicant_found = True
-                    print(f"Applicant filled via name: {applicant}")
-                except:
-                    pass
-            
-            # 방법 3: placeholder로 찾기
-            if not applicant_found:
-                try:
-                    await page.fill('input[placeholder*="applicant" i]', applicant)
-                    applicant_found = True
-                    print(f"Applicant filled via placeholder: {applicant}")
-                except:
-                    pass
-            
-            if not applicant_found:
-                print(f"Could not find Applicant input field for: {applicant}")
-            
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-        except Exception as e:
-            print(f"Error filling Applicant: {e}")
-
-    # 정렬(기본값이 Decision Date desc)
-    try:
-        await page.get_by_label(re.compile(r"Sort by", re.I)).select_option(label=sort)
-        await asyncio.sleep(random.uniform(0.5, 1.5))
-    except Exception:
-        pass  # 셀렉터가 바뀐 경우에도 기본 정렬이면 무시
-
-    # 검색 실행 버튼 (보통 'Search Database' 또는 이미지 버튼)
-    # 버튼 텍스트/alt를 포괄적으로 시도
-    try:
-        search_button_found = False
-        
-        # 방법 1: get_by_role 사용 (Playwright 최신 버전)
-        try:
-            if hasattr(page, 'get_by_role'):
-                if await page.get_by_role("button", name=re.compile(r"Search", re.I)).count():
-                    await page.get_by_role("button", name=re.compile(r"Search", re.I)).click()
-                    search_button_found = True
-                    print("Search button clicked via get_by_role")
-        except:
-            pass
-        
-        # 방법 2: 일반적인 CSS 선택자
-        if not search_button_found:
-            try:
-                await page.click('input[type="submit"]')
-                search_button_found = True
-                print("Search button clicked via CSS selector")
-            except:
-                pass
-        
-        # 방법 3: 텍스트로 찾기
-        if not search_button_found:
-            try:
-                await page.click('button:has-text("Search")')
-                search_button_found = True
-                print("Search button clicked via text")
-            except:
-                pass
-        
-        # 방법 4: 이미지 버튼
-        if not search_button_found:
-            try:
-                await page.click('input[type="image"]')
-                search_button_found = True
-                print("Search button clicked via image input")
-            except:
-                pass
-        
-        if not search_button_found:
-            print("Could not find search button")
-            return []
-        
-        print("Search button clicked successfully")
-        await asyncio.sleep(random.uniform(2, 4))
-    except Exception as e:
-        print(f"Error clicking search button: {e}")
+        params["search"] = f'product_code:"{product_code}"'
+    elif applicant:
+        params["search"] = f'applicant:"{applicant}"'
+    else:
         return []
 
-    await page.wait_for_load_state("domcontentloaded", timeout=60000)
-
-    # 최신 승인 항목은 첫 페이지에 나타나므로 첫 페이지만 수집
-    html = await page.content()
-    return [html]  # 단일 페이지만 반환
-
-def parse_results(html):
-    """결과 표에서 레코드를 추출. (K번호, Device Name, Applicant, Product Code, Decision Date, 상세URL)"""
-    soup = BeautifulSoup(html, "lxml")
-
-    # 결과 표는 보통 <table>로 구성되며 헤더에 '510(k) Number', 'Device Name' 등이 있다.
-    table = None
-    for t in soup.find_all("table"):
-        head = t.find("tr")
-        if not head: 
-            continue
-        headers = " ".join(th.get_text(strip=True) for th in head.find_all(["th","td"]))
-        # 더 유연한 패턴: 510(k) 또는 510(K) 모두 매칭, Device Name도 유연하게
-        if re.search(r"510\s*\(?\s*[kK]\s*\)?\s*Number", headers, re.I) and re.search(r"Device\s*Name", headers, re.I):
-            table = t
-            print(f"Found results table with headers: {headers[:150]}")
+    for attempt in range(3):
+        try:
+            resp = requests.get(OPENFDA_BASE, params=params, timeout=30)
+            if resp.status_code == 404:
+                # 결과 없음
+                logger.info("No results from API (404)")
+                return []
+            if resp.status_code == 429:
+                logger.warning("API rate limit hit, waiting 10s (attempt %d/3)", attempt + 1)
+                time.sleep(10)
+                continue
+            resp.raise_for_status()
             break
-    
-    if table is None:
-        print("WARNING: No results table found. Available table headers:")
-        for i, t in enumerate(soup.find_all("table")):
-            head = t.find("tr")
-            if head:
-                headers = " ".join(th.get_text(strip=True) for th in head.find_all(["th","td"]))
-                print(f"  Table {i}: {headers[:150]}")
-        return []
+        except requests.exceptions.RequestException as e:
+            logger.error("API request error (attempt %d/3): %s", attempt + 1, e)
+            if attempt < 2:
+                time.sleep(5 * (attempt + 1))
+            else:
+                return []
 
-    rows = []
-    for tr in table.find_all("tr")[1:]:
-        tds = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
-        links = tr.find_all("a")
-        detail_url = ""
-        knum = ""
-        
-        # 링크에서 K번호와 상세 URL 추출
-        for a in links:
-            href = a.get("href","")
-            # 상세 URL 찾기
-            if "cfpmn/pmn.cfm?ID=" in href:
-                detail_url = href if href.startswith("http") else "https://www.accessdata.fda.gov" + href
-                # 링크에서 K번호 추출 (예: cfpmn/pmn.cfm?ID=K240795)
-                k_match = re.search(r"ID=(K\d{6})", href, re.I)
-                if k_match:
-                    knum = k_match.group(1)
-                    break
-        
-        # 링크에서 찾지 못했으면 텍스트에서 찾기
-        if not knum:
-            for s in tds:
-                # 부분 매칭으로 K번호 찾기 (공백이나 다른 문자 허용)
-                k_match = re.search(r"K\d{6}", s, re.I)
-                if k_match:
-                    knum = k_match.group(0)
-                    break
-        
-        # K번호를 찾지 못했으면 스킵
-        if not knum:
-            print(f"WARNING: Could not extract K-number from row: {tds[:3]}")
+    data = resp.json()
+    results = data.get("results", [])
+
+    items = []
+    for r in results:
+        k_number = r.get("k_number", "")
+        if not k_number:
             continue
-        
-        # 흔한 컬럼 배치: [Device Name, Applicant, 510(K) Number, Decision Date, ...]
-        # 또는 [510(K) Number, Device Name, Applicant, ...] 등 다양할 수 있음
-        # 헤더 순서를 확인하여 정확한 인덱스 찾기
-        dev_name = ""
-        applicant = ""
-        product_code = ""
-        decision_date = ""
-        
-        # 간단한 방법: K번호가 있는 컬럼을 기준으로 다른 컬럼 찾기
-        # 또는 일반적인 패턴 사용
-        if len(tds) >= 2:
-            # 일반적인 순서: Device Name, Applicant, 510(K) Number, Decision Date
-            # K번호가 3번째 컬럼에 있다고 가정
-            dev_name = tds[0] if len(tds) > 0 else ""
-            applicant = tds[1] if len(tds) > 1 else ""
-            # Decision Date 찾기 (MM/DD/YYYY 또는 YYYYMMDD 형태)
-            for cell in tds:
-                # MM/DD/YYYY 형태
-                if re.search(r"\d{2}/\d{2}/\d{4}", cell):
-                    decision_date = cell
-                    break
-                # YYYYMMDD 형태
-                elif re.fullmatch(r"\d{8}", cell):
-                    decision_date = cell
-                    break
-
-        rows.append({
-            "k_number": knum,
-            "device_name": dev_name,
-            "applicant": applicant,
-            "product_code": product_code,
-            "decision_date": decision_date,
-            "detail_url": detail_url
+        items.append({
+            "k_number": k_number,
+            "device_name": r.get("device_name", ""),
+            "applicant": r.get("applicant", ""),
+            "product_code": r.get("product_code", ""),
+            "decision_date": r.get("decision_date", ""),
+            "detail_url": f"{DETAIL_BASE}?ID={k_number}",
         })
-    
-    print(f"Parsed {len(rows)} rows with K-numbers")
-    # 빈 로우 제거
-    rows = [r for r in rows if r["k_number"]]
-    return rows
 
-async def main():
+    logger.info("API returned %d results", len(items))
+    return items
+
+def main():
     state = load_state()
     seen = set(state.get("seen_k_numbers", []))
     all_new = []
 
-    async with async_playwright() as p:
-        # 더 강력한 우회 옵션 추가
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-web-security",
-                "--disable-features=VizDisplayCompositor",
-                "--disable-ipc-flooding-protection",
-                "--disable-background-timer-throttling",
-                "--disable-backgrounding-occluded-windows",
-                "--disable-renderer-backgrounding",
-                "--disable-features=TranslateUI",
-                "--disable-ipc-flooding-protection",
-                "--disable-hang-monitor",
-                "--disable-prompt-on-repost",
-                "--disable-client-side-phishing-detection",
-                "--disable-component-extensions-with-background-pages",
-                "--disable-default-apps",
-                "--disable-sync",
-                "--disable-translate",
-                "--hide-scrollbars",
-                "--mute-audio",
-                "--no-first-run",
-                "--safebrowsing-disable-auto-update",
-                "--disable-extensions",
-                "--disable-plugins",
-                "--disable-images",
-                "--disable-javascript",
-                "--disable-css",
-                "--disable-gpu",
-                "--disable-software-rasterizer",
-                "--disable-background-networking",
-                "--disable-default-apps",
-                "--disable-sync",
-                "--disable-translate",
-                "--metrics-recording-only",
-                "--no-report-upload",
-                "--disable-background-timer-throttling",
-                "--disable-backgrounding-occluded-windows",
-                "--disable-renderer-backgrounding",
-                "--disable-features=TranslateUI",
-                "--disable-ipc-flooding-protection",
-                "--disable-hang-monitor",
-                "--disable-prompt-on-repost",
-                "--disable-client-side-phishing-detection",
-                "--disable-component-extensions-with-background-pages",
-                "--disable-default-apps",
-                "--disable-sync",
-                "--disable-translate",
-                "--hide-scrollbars",
-                "--mute-audio",
-                "--no-first-run",
-                "--safebrowsing-disable-auto-update"
-            ]
-        )
-        
-        # 더 자연스러운 브라우저 컨텍스트 설정
-        context = await browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            locale='en-US',
-            timezone_id='America/New_York',
-            permissions=['geolocation'],
-            extra_http_headers={
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache',
-                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"macOS"',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Upgrade-Insecure-Requests': '1'
-            }
-        )
-        
-        # JavaScript 실행으로 자동화 감지 우회
-        await context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined,
-            });
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5],
-            });
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en'],
-            });
-            window.chrome = {
-                runtime: {},
-            };
-        """)
-        
-        page = await context.new_page()
-        
-        # 페이지 로드 전 추가 설정
-        await page.set_extra_http_headers({
-            'Referer': 'https://www.google.com/',
-            'Origin': 'https://www.accessdata.fda.gov'
-        })
+    # 1) Product Code 워치
+    for pc in WATCH_PRODUCT_CODES:
+        logger.info("Searching for Product Code: %s", pc)
+        for r in query_openfda(product_code=pc):
+            if r["k_number"] not in seen:
+                all_new.append(("Product code = " + pc, r))
+                seen.add(r["k_number"])
+        time.sleep(0.3)  # API rate limit 고려
 
-        # 1) Product Code 워치
-        for pc in WATCH_PRODUCT_CODES:
-            print(f"Searching for Product Code: {pc}")
-            html_pages = await run_query(page, product_code=pc)
-            for html in html_pages:
-                for r in parse_results(html):
-                    if r["k_number"] not in seen:
-                        all_new.append(("Product code = " + pc, r))
-                        seen.add(r["k_number"])
-
-        # 2) Applicant 워치 (부분일치; FDA는 대개 대소문자 구분 없음)
-        for ap in WATCH_APPLICANTS:
-            print(f"Searching for Applicant: {ap}")
-            html_pages = await run_query(page, applicant=ap)
-            for html in html_pages:
-                for r in parse_results(html):
-                    if r["k_number"] not in seen:
-                        all_new.append((f'Applicant contains "{ap}"', r))
-                        seen.add(r["k_number"])
-
-        await browser.close()
+    # 2) Applicant 워치
+    for ap in WATCH_APPLICANTS:
+        logger.info("Searching for Applicant: %s", ap)
+        for r in query_openfda(applicant=ap):
+            if r["k_number"] not in seen:
+                all_new.append((f'Applicant contains "{ap}"', r))
+                seen.add(r["k_number"])
+        time.sleep(0.3)
 
     # 알림 및 상태 저장
-    print(f"=== DEBUG INFO ===")
-    print(f"Total results found: {len(seen)}")
-    print(f"New results found: {len(all_new)}")
-    print(f"All new items: {all_new}")
-    
+    logger.info("Total results: %d, New: %d", len(seen), len(all_new))
+
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
-    
+
     if all_new:
         # 신규 항목이 있을 때: 신규 감지 테이블 포함
         rows = []
@@ -511,9 +182,9 @@ async def main():
             f"<tr><th>Rule</th><th>510(k)#</th><th>Device</th><th>Applicant</th>"
             f"<th>Prod. Code</th><th>Decision Date</th><th>Link</th></tr>"
             + "".join(rows) + "</table>"
-            f"<p style='color:#666'>출처: FDA 510(k) 웹 데이터베이스. (웹 DB 주간 갱신, 다운로드 월간 갱신)</p>"
+            f"<p style='color:#666'>출처: openFDA API (api.fda.gov). 데이터 월간 갱신.</p>"
         )
-        send_email(f"[510(k) HTML] 신규 {len(all_new)}건 감지", html)
+        send_email(f"[510(k)] 신규 {len(all_new)}건 감지", html)
     else:
         # 신규 항목이 없을 때: 일일 모니터링 리포트
         html = (
@@ -525,19 +196,19 @@ async def main():
             f"<li><strong>Product Codes:</strong> {', '.join(WATCH_PRODUCT_CODES)}</li>"
             f"<li><strong>Applicants:</strong> {', '.join(WATCH_APPLICANTS)}</li>"
             f"</ul>"
-            f"<p style='color:#666'>출처: FDA 510(k) 웹 데이터베이스. (웹 DB 주간 갱신, 다운로드 월간 갱신)</p>"
+            f"<p style='color:#666'>출처: openFDA API (api.fda.gov). 데이터 월간 갱신.</p>"
         )
-        send_email(f"[510(k) HTML] 일일 모니터링 리포트 - 신규 항목 없음", html)
-        print("No new 510(k) approvals found - Daily report email sent")
+        send_email(f"[510(k)] 일일 모니터링 리포트 - 신규 항목 없음", html)
+        logger.info("No new 510(k) approvals found - daily report sent")
 
     # seen 업데이트 (최대 규모 제한)
-    print(f"Updating state file with {len(seen)} seen K-numbers")
+    logger.info("Updating state file with %d seen K-numbers", len(seen))
     state["seen_k_numbers"] = list(seen)[-5000:]
     save_state(state)
-    print(f"State file updated successfully")
+    logger.info("State file updated successfully")
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except Exception:
-        print(traceback.format_exc())
+        logger.error(traceback.format_exc())

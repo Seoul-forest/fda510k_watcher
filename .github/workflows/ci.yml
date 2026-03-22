@@ -44,22 +44,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio
-
-      - name: Install Playwright browsers
-        run: |
-          playwright install chromium
-          playwright install-deps chromium
+          pip install requests python-dotenv
+          pip install pytest
 
       - name: Run tests
-        env:
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
-          WATCH_PRODUCT_CODES: ${{ secrets.WATCH_PRODUCT_CODES }}
-          WATCH_APPLICANTS: ${{ secrets.WATCH_APPLICANTS }}
         run: |
           pytest tests/ -v --tb=short
