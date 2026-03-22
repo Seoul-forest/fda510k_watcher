@@ -162,43 +162,91 @@ def main():
     now = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
 
     if all_new:
-        # 신규 항목이 있을 때: 신규 감지 테이블 포함
         rows = []
-        for title, it in all_new:
+        for i, (title, it) in enumerate(all_new):
+            bg = "#ffffff" if i % 2 == 0 else "#f8f9fa"
             rows.append(
-                f"<tr>"
-                f"<td>{title}</td>"
-                f"<td>{it['k_number']}</td>"
-                f"<td>{it['device_name']}</td>"
-                f"<td>{it['applicant']}</td>"
-                f"<td>{it['product_code']}</td>"
-                f"<td>{iso(it['decision_date'])}</td>"
-                f"<td><a href='{it['detail_url']}' target='_blank'>detail</a></td>"
+                f"<tr style='background:{bg}'>"
+                f"<td style='padding:10px 14px;border-bottom:1px solid #e9ecef;color:#6c757d;font-size:12px'>{title}</td>"
+                f"<td style='padding:10px 14px;border-bottom:1px solid #e9ecef;font-weight:600'>"
+                f"<a href='{it['detail_url']}' target='_blank' style='color:#0d6efd;text-decoration:none'>{it['k_number']}</a></td>"
+                f"<td style='padding:10px 14px;border-bottom:1px solid #e9ecef'>{it['device_name']}</td>"
+                f"<td style='padding:10px 14px;border-bottom:1px solid #e9ecef'>{it['applicant']}</td>"
+                f"<td style='padding:10px 14px;border-bottom:1px solid #e9ecef;text-align:center'>"
+                f"<span style='background:#e7f1ff;color:#0d6efd;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600'>{it['product_code']}</span></td>"
+                f"<td style='padding:10px 14px;border-bottom:1px solid #e9ecef;white-space:nowrap'>{iso(it['decision_date'])}</td>"
                 f"</tr>"
             )
-        html = (
-            f"<h2>FDA 510(k) 신규 감지 ({now} KST)</h2>"
-            f"<table border='1' cellpadding='6' cellspacing='0'>"
-            f"<tr><th>Rule</th><th>510(k)#</th><th>Device</th><th>Applicant</th>"
-            f"<th>Prod. Code</th><th>Decision Date</th><th>Link</th></tr>"
-            + "".join(rows) + "</table>"
-            f"<p style='color:#666'>출처: openFDA API (api.fda.gov). 데이터 월간 갱신.</p>"
-        )
-        send_email(f"[510(k)] 신규 {len(all_new)}건 감지", html)
+        html = f"""
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:900px;margin:0 auto;color:#212529">
+          <div style="background:linear-gradient(135deg,#0d6efd,#6610f2);padding:28px 32px;border-radius:12px 12px 0 0">
+            <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700">FDA 510(k) Alert</h1>
+            <p style="margin:6px 0 0;color:rgba(255,255,255,0.85);font-size:14px">{now} KST</p>
+          </div>
+          <div style="background:#fff;padding:24px 32px;border:1px solid #e9ecef;border-top:none">
+            <div style="display:flex;gap:16px;margin-bottom:24px">
+              <div style="background:#e7f1ff;border-radius:10px;padding:16px 24px;flex:1;text-align:center">
+                <div style="font-size:28px;font-weight:700;color:#0d6efd">{len(all_new)}</div>
+                <div style="font-size:12px;color:#6c757d;margin-top:2px">New Clearances</div>
+              </div>
+              <div style="background:#f0fdf4;border-radius:10px;padding:16px 24px;flex:1;text-align:center">
+                <div style="font-size:28px;font-weight:700;color:#198754">{len(seen)}</div>
+                <div style="font-size:12px;color:#6c757d;margin-top:2px">Total Tracked</div>
+              </div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="background:#f8f9fa">
+                  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#6c757d;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #dee2e6">Rule</th>
+                  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#6c757d;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #dee2e6">510(k)#</th>
+                  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#6c757d;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #dee2e6">Device</th>
+                  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#6c757d;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #dee2e6">Applicant</th>
+                  <th style="padding:10px 14px;text-align:center;font-weight:600;color:#6c757d;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #dee2e6">Code</th>
+                  <th style="padding:10px 14px;text-align:left;font-weight:600;color:#6c757d;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #dee2e6">Decision Date</th>
+                </tr>
+              </thead>
+              <tbody>{"".join(rows)}</tbody>
+            </table>
+          </div>
+          <div style="background:#f8f9fa;padding:16px 32px;border-radius:0 0 12px 12px;border:1px solid #e9ecef;border-top:none">
+            <p style="margin:0;font-size:11px;color:#adb5bd">Source: openFDA API (api.fda.gov) | Updated monthly</p>
+          </div>
+        </div>"""
+        send_email(f"[510(k)] {len(all_new)}건 신규 감지", html)
     else:
-        # 신규 항목이 없을 때: 일일 모니터링 리포트
-        html = (
-            f"<h2>FDA 510(k) 일일 모니터링 리포트 ({now} KST)</h2>"
-            f"<p><strong>신규 510(k) 승인: 없음</strong></p>"
-            f"<p>현재 모니터링 중인 K-number: <strong>{len(seen)}개</strong></p>"
-            f"<p>검색 조건:</p>"
-            f"<ul>"
-            f"<li><strong>Product Codes:</strong> {', '.join(WATCH_PRODUCT_CODES)}</li>"
-            f"<li><strong>Applicants:</strong> {', '.join(WATCH_APPLICANTS)}</li>"
-            f"</ul>"
-            f"<p style='color:#666'>출처: openFDA API (api.fda.gov). 데이터 월간 갱신.</p>"
+        pc_tags = " ".join(
+            f"<span style='background:#e7f1ff;color:#0d6efd;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;display:inline-block;margin:2px'>{pc}</span>"
+            for pc in WATCH_PRODUCT_CODES
         )
-        send_email(f"[510(k)] 일일 모니터링 리포트 - 신규 항목 없음", html)
+        ap_tags = " ".join(
+            f"<span style='background:#fff3cd;color:#997404;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;display:inline-block;margin:2px'>{ap}</span>"
+            for ap in WATCH_APPLICANTS
+        )
+        html = f"""
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;color:#212529">
+          <div style="background:linear-gradient(135deg,#6c757d,#495057);padding:28px 32px;border-radius:12px 12px 0 0">
+            <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700">FDA 510(k) Daily Report</h1>
+            <p style="margin:6px 0 0;color:rgba(255,255,255,0.85);font-size:14px">{now} KST</p>
+          </div>
+          <div style="background:#fff;padding:28px 32px;border:1px solid #e9ecef;border-top:none">
+            <div style="background:#f8f9fa;border-radius:10px;padding:20px;text-align:center;margin-bottom:24px">
+              <p style="margin:0;font-size:15px;color:#6c757d">No new 510(k) clearances detected</p>
+              <p style="margin:8px 0 0;font-size:13px;color:#adb5bd">Tracking <strong style="color:#212529">{len(seen)}</strong> K-numbers</p>
+            </div>
+            <div style="margin-bottom:16px">
+              <p style="font-size:12px;font-weight:600;color:#6c757d;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Product Codes</p>
+              <div>{pc_tags}</div>
+            </div>
+            <div>
+              <p style="font-size:12px;font-weight:600;color:#6c757d;margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Applicants</p>
+              <div>{ap_tags}</div>
+            </div>
+          </div>
+          <div style="background:#f8f9fa;padding:16px 32px;border-radius:0 0 12px 12px;border:1px solid #e9ecef;border-top:none">
+            <p style="margin:0;font-size:11px;color:#adb5bd">Source: openFDA API (api.fda.gov) | Updated monthly</p>
+          </div>
+        </div>"""
+        send_email(f"[510(k)] Daily Report - No New Items", html)
         logger.info("No new 510(k) approvals found - daily report sent")
 
     # seen 업데이트 (최대 규모 제한)
