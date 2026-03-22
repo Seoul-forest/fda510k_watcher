@@ -3,11 +3,9 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import fda_510k_html_watch as module
+import fda_510k_html_watch as module  # noqa: E402
 
 
 def test_load_state_returns_default_when_file_missing(tmp_path, monkeypatch):

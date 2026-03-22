@@ -1,12 +1,11 @@
 """Unit tests for openFDA API query logic in fda_510k_html_watch.py."""
-import json
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from fda_510k_html_watch import query_openfda, iso
+from fda_510k_html_watch import query_openfda, iso  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,11 @@
 """Tests for send_email() in fda_510k_html_watch.py."""
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import fda_510k_html_watch as module
+import fda_510k_html_watch as module  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
